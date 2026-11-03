@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Plugin Store",
+    "description": "Adds a Plugin Store tab to the Plugins page: browse plugins discovered in the GitHub dsh-plugin topic, classified into the community catalog categories, and shortlist them before installing."
+  }
+}
