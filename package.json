@@ -1,6 +1,6 @@
 {
-  "name": "@local/dsh-plugin-store",
-  "version": "1.0.0",
+  "name": "@rainoffire/dsh-plugin-store",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Plugin Store tab for the DSH Plugins page: browses plugins discovered in the GitHub dsh-plugin topic, classified into the community catalog categories.",

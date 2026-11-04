@@ -10,8 +10,8 @@ dsh plugin --profile web add github:rainoffire/dsh-plugin-store
 ```
 
 The repository is the plugin package itself (`package.json` at the root), so the Git spec installs
-directly. The package keeps the local name `@local/dsh-plugin-store` so the development checkout and
-the running profile stay in sync; rename it under `name` if you publish it to npm.
+directly. The package is published as `@rainoffire/dsh-plugin-store`; the `private` flag keeps an
+accidental npm publish from happening until you remove it.
 
 ## What it does
 

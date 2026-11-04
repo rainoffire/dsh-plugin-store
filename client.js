@@ -7,7 +7,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: '@local/dsh-plugin-store',
+  id: '@rainoffire/dsh-plugin-store',
   factory(require) {
     const React = require('react')
     const h = React.createElement
