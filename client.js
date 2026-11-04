@@ -47,6 +47,18 @@ window.__ModuleLoader__.load({
       details: '插件详情',
       viewRepo: '打开 GitHub 仓库',
       repoOnly: '仅仓库',
+      installed: '已安装',
+      notInstalled: '未安装',
+      incompatible: '不兼容',
+      compatibility: '兼容性',
+      requiresDsh: '需要 DSH {range}',
+      currentDsh: '当前 DSH {version}',
+      installBlocked: '需要 DSH {range}，当前为 {version}',
+      installedHint: '已在当前 profile 安装',
+      openInstalled: '打开已安装',
+      unknownCompatibility: '未声明版本要求',
+      status: '状态',
+      incompatibleNotice: '有 {n} 个插件要求其他 DSH 版本，已标记为不兼容；当前 DSH 为 {version}。',
       noDescription: '这个插件还没有填写简介。',
       topicBadge: '话题',
       newBadge: '上新',
@@ -144,6 +156,18 @@ window.__ModuleLoader__.load({
       details: 'Plugin details',
       viewRepo: 'Open the GitHub repository',
       repoOnly: 'Repo only',
+      installed: 'Installed',
+      notInstalled: 'Not installed',
+      incompatible: 'Incompatible',
+      compatibility: 'Compatibility',
+      requiresDsh: 'Requires DSH {range}',
+      currentDsh: 'Current DSH {version}',
+      installBlocked: 'Requires DSH {range}; this DSH is {version}',
+      installedHint: 'Already installed in this profile',
+      openInstalled: 'Open installed',
+      unknownCompatibility: 'No version requirement declared',
+      status: 'Status',
+      incompatibleNotice: '{n} plugins require another DSH version and are marked incompatible; this DSH is {version}.',
       noDescription: 'This plugin has no description yet.',
       topicBadge: 'Topic',
       newBadge: 'New',
@@ -278,11 +302,18 @@ window.__ModuleLoader__.load({
 .dsh-store-tag{padding:2px 7px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;color:var(--dsw-alias-label-secondary);font-size:10.5px;line-height:1.55;white-space:nowrap}
 .dsh-store-tag.is-topic{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
 .dsh-store-tag.is-new{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
+.dsh-store-tag.is-installed{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
+.dsh-store-tag.is-incompatible{border-color:var(--dsw-alias-state-warn-primary);color:var(--dsw-alias-state-warn-primary)}
 .dsh-store-card-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding-top:2px}
 .dsh-store-card-meta{overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:11px;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap}
 .dsh-store-card-actions{display:flex;align-items:center;gap:6px;flex:none}
 .dsh-store-install{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;border:1px solid var(--dsw-alias-brand-primary);border-radius:7px;background:var(--dsw-alias-brand-primary);color:#fff;font-size:12px;font-weight:600}
 .dsh-store-install:hover{filter:brightness(1.06)}
+.dsh-store-installed{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-state-success-primary);border-radius:7px;background:transparent;color:var(--dsw-alias-state-success-primary);font-size:11.5px}
+.dsh-store-installed:hover{background:var(--dsw-alias-bg-layer-2)}
+.dsh-store-incompatible{padding:3px 7px;border:1px solid var(--dsw-alias-state-warn-primary);border-radius:999px;color:var(--dsw-alias-state-warn-primary);font-size:10.5px;line-height:1.55;white-space:nowrap}
+.dsh-store-cart-row-note{color:var(--dsw-alias-label-secondary);font-size:11px;white-space:nowrap}
+.dsh-store-cart-row-note.is-warn{color:var(--dsw-alias-state-warn-primary)}
 .dsh-store-link{display:grid;place-items:center;width:28px;height:28px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;color:var(--dsw-alias-label-secondary);text-decoration:none}
 .dsh-store-link:hover{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-primary)}
 .dsh-store-repo-only{color:var(--dsw-alias-label-secondary);font-size:11px;white-space:nowrap}
@@ -590,7 +621,7 @@ window.__ModuleLoader__.load({
     }
 
     function StoreTab(props) {
-      const { t, install } = props
+      const { t, install, openPackage } = props
       const localeId = React.useSyncExternalStore(props.subscribeLocale, props.getLocaleId, props.getLocaleId)
       const isZh = String(localeId).toLowerCase().startsWith('zh')
       const [catalog, load] = useCatalog()
@@ -630,6 +661,7 @@ window.__ModuleLoader__.load({
         categories: 0,
       }
       const generatedAt = data?.generatedAt ?? Date.now()
+      const runtimeVersion = data?.runtimeVersion ?? ''
       const topicTotal = (stats.topicMatched ?? 0) + (stats.topicOnly ?? 0)
 
       const searchIndex = React.useMemo(
@@ -728,6 +760,7 @@ window.__ModuleLoader__.load({
       const runInstall = React.useCallback(
         (item) => {
           if (!item || !item.installable || !item.npmName || typeof install !== 'function') return
+          if (item.installed || item.compatible === false) return
           try {
             install({
               spec: item.npmName,
@@ -773,6 +806,13 @@ window.__ModuleLoader__.load({
           ? item.descriptionZh || item.descriptionEn || ''
           : item.descriptionEn || item.descriptionZh || ''
 
+      const canInstallItem = (item) =>
+        Boolean(item?.installable && item?.npmName && item?.compatible !== false && !item?.installed)
+
+      const openInstalled = (item) => {
+        if (typeof openPackage === 'function' && item?.npmName) openPackage(item.npmName)
+      }
+
       const hero = h(
         'section',
         { className: 'dsh-store-hero' },
@@ -803,6 +843,9 @@ window.__ModuleLoader__.load({
               h('strong', null, formatNumber(topicTotal, localeId)),
               t('statTopic'),
             ),
+            runtimeVersion
+              ? h('span', { className: 'dsh-store-stat' }, h('strong', null, 'DSH'), runtimeVersion)
+              : null,
             h(
               'span',
               { className: 'dsh-store-stat' },
@@ -958,6 +1001,23 @@ window.__ModuleLoader__.load({
       if (data?.stale) {
         notices.push(h('div', { className: 'dsh-store-notice is-warn', key: 'stale' }, Icon('alert', 15), h('span', null, t('staleNotice'))))
       }
+      if ((stats.incompatible ?? 0) > 0) {
+        notices.push(
+          h(
+            'div',
+            { className: 'dsh-store-notice is-warn', key: 'compat' },
+            Icon('alert', 15),
+            h(
+              'span',
+              null,
+              fill(t('incompatibleNotice'), {
+                n: formatNumber(stats.incompatible, localeId),
+                version: runtimeVersion || '?',
+              }),
+            ),
+          ),
+        )
+      }
       if (data?.errors?.topic) {
         notices.push(
           h('div', { className: 'dsh-store-notice is-warn', key: 'topic' }, Icon('alert', 15), h('span', null, t('topicError'))),
@@ -1091,6 +1151,10 @@ window.__ModuleLoader__.load({
                         h('span', { className: 'dsh-store-tag is-category' }, categoryLabel(item.category)),
                         item.topic ? h('span', { className: 'dsh-store-tag is-topic' }, t('topicBadge')) : null,
                         isFresh(item.publishedAt) ? h('span', { className: 'dsh-store-tag is-new' }, t('newBadge')) : null,
+                        item.installed ? h('span', { className: 'dsh-store-tag is-installed' }, t('installed')) : null,
+                        item.compatible === false
+                          ? h('span', { className: 'dsh-store-tag is-incompatible' }, t('incompatible'))
+                          : null,
                       ),
                       h(
                         'div',
@@ -1103,22 +1167,50 @@ window.__ModuleLoader__.load({
                         h(
                           'div',
                           { className: 'dsh-store-card-actions' },
-                          item.installable
+                          item.installed
                             ? h(
                                 'button',
                                 {
-                                  className: 'dsh-store-install',
+                                  className: 'dsh-store-installed',
                                   type: 'button',
-                                  title: t('installHint'),
+                                  title: t('installedHint'),
                                   onClick: (event) => {
                                     event.stopPropagation()
-                                    runInstall(item)
+                                    openInstalled(item)
                                   },
                                 },
-                                Icon('download', 13),
-                                t('install'),
+                                Icon('check', 13),
+                                t('installed'),
                               )
-                            : h('span', { className: 'dsh-store-repo-only' }, t('repoOnly')),
+                            : item.compatible === false
+                              ? h(
+                                  'span',
+                                  {
+                                    className: 'dsh-store-incompatible',
+                                    title: fill(t('installBlocked'), {
+                                      range: item.requires || '?',
+                                      version: runtimeVersion || '?',
+                                    }),
+                                  },
+                                  t('incompatible'),
+                                )
+                              : item.installable
+                                ? h(
+                                    'button',
+                                    {
+                                      className: 'dsh-store-install',
+                                      type: 'button',
+                                      title: t('installHint'),
+                                      disabled: !canInstallItem(item),
+                                      onClick: (event) => {
+                                        event.stopPropagation()
+                                        runInstall(item)
+                                      },
+                                    },
+                                    Icon('download', 13),
+                                    t('install'),
+                                  )
+                                : h('span', { className: 'dsh-store-repo-only' }, t('repoOnly')),
                           h(
                             'a',
                             {
@@ -1207,6 +1299,15 @@ window.__ModuleLoader__.load({
             const description = descriptionOf(detail)
             const rows = [
               [t('categoryLabel'), categoryLabel(detail.category)],
+              [t('status'), detail.installed ? t('installed') : t('notInstalled')],
+              [
+                t('compatibility'),
+                detail.compatible === false
+                  ? fill(t('requiresDsh'), { range: detail.requires || '?' })
+                  : detail.compatible === true
+                    ? fill(t('currentDsh'), { version: runtimeVersion || '?' })
+                    : t('unknownCompatibility'),
+              ],
               detail.npmName ? [t('npm'), detail.npmName] : null,
               detail.version ? [t('version'), `v${detail.version}`] : null,
               detail.publishedAt ? [t('published'), formatDate(detail.publishedAt, localeId)] : null,
@@ -1233,21 +1334,40 @@ window.__ModuleLoader__.load({
                     },
                     selected ? t('inCart') : t('addToCart'),
                   ),
-                  detail.installable
+                  detail.installed
                     ? h(
                         'button',
                         {
-                          className: 'dsh-store-primary',
+                          className: 'dsh-store-ghost',
                           type: 'button',
-                          onClick: () => {
-                            setDetailId(null)
-                            runInstall(detail)
-                          },
-                          title: t('installHint'),
+                          onClick: () => openInstalled(detail),
                         },
-                        t('install'),
+                        t('openInstalled'),
                       )
-                    : h('span', { className: 'dsh-store-hint' }, t('repoOnly')),
+                    : detail.compatible === false
+                      ? h(
+                          'span',
+                          { className: 'dsh-store-hint' },
+                          fill(t('installBlocked'), {
+                            range: detail.requires || '?',
+                            version: runtimeVersion || '?',
+                          }),
+                        )
+                      : detail.installable
+                        ? h(
+                            'button',
+                            {
+                              className: 'dsh-store-primary',
+                              type: 'button',
+                              onClick: () => {
+                                setDetailId(null)
+                                runInstall(detail)
+                              },
+                              title: t('installHint'),
+                            },
+                            t('install'),
+                          )
+                        : h('span', { className: 'dsh-store-hint' }, t('repoOnly')),
                 ),
               },
               h(
@@ -1339,21 +1459,25 @@ window.__ModuleLoader__.load({
                         h(
                           'div',
                           { className: 'dsh-store-cart-row-actions' },
-                          item.installable
-                            ? h(
-                                'button',
-                                {
-                                  className: 'dsh-store-mini is-brand',
-                                  type: 'button',
-                                  onClick: () => {
-                                    setCartOpen(false)
-                                    runInstall(item)
-                                  },
-                                  title: t('installHint'),
-                                },
-                                t('install'),
-                              )
-                            : null,
+                          item.installed
+                            ? h('span', { className: 'dsh-store-cart-row-note' }, t('installed'))
+                            : item.compatible === false
+                              ? h('span', { className: 'dsh-store-cart-row-note is-warn' }, t('incompatible'))
+                              : item.installable
+                                ? h(
+                                    'button',
+                                    {
+                                      className: 'dsh-store-mini is-brand',
+                                      type: 'button',
+                                      onClick: () => {
+                                        setCartOpen(false)
+                                        runInstall(item)
+                                      },
+                                      title: t('installHint'),
+                                    },
+                                    t('install'),
+                                  )
+                                : null,
                           h(
                             'button',
                             {

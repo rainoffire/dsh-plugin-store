@@ -86,6 +86,8 @@ const TOPIC_CATEGORY_RULES = [
 let cache = null
 /** @type {Promise<Record<string, unknown>> | null} */
 let building = null
+/** @type {import('@deepseek-ai/cordis').Context | null} */
+let hostContext = null
 
 /** Wait for the Web carrier before claiming a route; a headless profile keeps the row inactive. */
 export const inject = ['webServer']
@@ -94,6 +96,7 @@ export const inject = ['webServer']
 export function apply(ctx) {
   const webServer = ctx.webServer
   if (!webServer) return
+  hostContext = ctx
   ctx.effect(
     () =>
       webServer.register({
@@ -152,11 +155,13 @@ function getCatalog(refresh) {
   return building
 }
 
-/** Fetch the two sources once and project them into the compact store document. */
+/** Fetch the sources once and project them into the compact store document. */
 async function buildCatalog() {
-  const [catalogResult, topicResult] = await Promise.allSettled([
+  const runtimeVersion = readRuntimeVersion(hostContext)
+  const [catalogResult, topicResult, bundlesResult] = await Promise.allSettled([
     fetchJson(CATALOG_URL),
     fetchJson(TOPIC_URL, githubHeaders()),
+    readInstalledBundles(hostContext),
   ])
 
   const errors = { catalog: null, topic: null }
@@ -165,13 +170,14 @@ async function buildCatalog() {
 
   const catalog = catalogResult.status === 'fulfilled' ? catalogResult.value : null
   const topic = topicResult.status === 'fulfilled' ? topicResult.value : null
+  const installed = bundlesResult.status === 'fulfilled' ? bundlesResult.value : new Set()
 
   if (!catalog && !topic) {
     throw new Error(`catalog and topic both unavailable: ${errors.catalog ?? 'unknown'}`)
   }
 
   const categoryTitles = readCategoryTitles(catalog)
-  const catalogItems = projectCatalog(catalog, categoryTitles)
+  const catalogItems = projectCatalog(catalog, categoryTitles, runtimeVersion, installed)
   const topicStats = applyTopic(topic, catalogItems, categoryTitles)
 
   const items = catalogItems.concat(topicStats.extras)
@@ -190,6 +196,7 @@ async function buildCatalog() {
   return {
     generatedAt: Date.now(),
     stale: false,
+    runtimeVersion,
     source: {
       catalog: CATALOG_URL,
       catalogPage: 'https://awesome-dsh-plugin.com',
@@ -203,6 +210,8 @@ async function buildCatalog() {
       topicMatched: topicStats.matched,
       topicRepos: topicStats.repos,
       categories: categories.length,
+      installed: catalogItems.filter((item) => item.installed).length,
+      incompatible: catalogItems.filter((item) => item.compatible === false).length,
     },
     categories,
     errors,
@@ -227,7 +236,7 @@ function readCategoryTitles(catalog) {
 }
 
 /** Project catalog entries into the store shape, dropping the fields the page never needs. */
-function projectCatalog(catalog, categoryTitles) {
+function projectCatalog(catalog, categoryTitles, runtimeVersion, installed) {
   const plugins = catalog && Array.isArray(catalog.plugins) ? catalog.plugins : []
   const items = []
   for (const plugin of plugins) {
@@ -244,6 +253,7 @@ function projectCatalog(catalog, categoryTitles) {
     const latest = versions.length > 0 ? versions[versions.length - 1] : null
     const version = latest && typeof latest.version === 'string' ? latest.version : ''
     const publishedAt = latest && Number.isFinite(latest.publishTimestamp) ? latest.publishTimestamp : 0
+    const requires = typeof latest?.engines?.dsh === 'string' ? latest.engines.dsh : ''
     const category = typeof plugin.metadata?.category === 'string' && categoryTitles[plugin.metadata.category]
       ? plugin.metadata.category
       : 'other'
@@ -261,6 +271,9 @@ function projectCatalog(catalog, categoryTitles) {
       category,
       version,
       publishedAt,
+      requires,
+      compatible: checkCompatibility(runtimeVersion, requires),
+      installed: installed.has(npmName),
       installable: Boolean(npmName),
       topic: false,
       stars: 0,
@@ -332,6 +345,9 @@ function applyTopic(topic, catalogItems, categoryTitles) {
       category,
       version: '',
       publishedAt: createdAt,
+      requires: '',
+      compatible: null,
+      installed: false,
       installable: false,
       topic: true,
       stars,
@@ -454,6 +470,125 @@ async function fetchJson(url, headers = {}) {
   } finally {
     clearTimeout(timer)
   }
+}
+
+/** Read the running DSH release from the client module graph. */
+function readRuntimeVersion(ctx) {
+  try {
+    const clientModules = ctx?.get?.('clientModules')
+    const version = clientModules?.graph?.()?.release?.version
+    return typeof version === 'string' && version ? version : null
+  } catch {
+    return null
+  }
+}
+
+/** Read the package names this profile already installed, if the manager exposes them. */
+async function readInstalledBundles(ctx) {
+  try {
+    const manager = ctx?.get?.('pluginManager')
+    if (!manager || typeof manager.listBundles !== 'function') return new Set()
+    const bundles = await manager.listBundles()
+    if (!Array.isArray(bundles)) return new Set()
+    return new Set(
+      bundles
+        .filter((bundle) => bundle && bundle.installed === true && typeof bundle.name === 'string')
+        .map((bundle) => bundle.name),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+/** Whether a declared DSH engine range accepts the running release. `null` means unknown. */
+function checkCompatibility(runtimeVersion, range) {
+  if (!range || range === '*') return true
+  if (!runtimeVersion) return null
+  const result = satisfiesRange(runtimeVersion, range)
+  return result === null ? null : result
+}
+
+/** Minimal semver range check for the catalog's comparator ranges (`>=`, `<`, `||`, `^`, `~`). */
+function satisfiesRange(version, range) {
+  const current = parseVersion(version)
+  if (!current) return null
+  const groups = String(range)
+    .split('||')
+    .map((group) => group.trim())
+    .filter(Boolean)
+  if (groups.length === 0) return true
+  for (const group of groups) {
+    const tokens =
+      group.match(/(>=|<=|>|<|=|\^|~)?\s*v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?/g) ?? []
+    if (tokens.length === 0) return null
+    let accepted = true
+    for (const token of tokens) {
+      const match = /^(>=|<=|>|<|=|\^|~)?\s*v?([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)$/.exec(token)
+      if (!match) return null
+      const operator = match[1] ?? '='
+      const target = parseVersion(match[2])
+      if (!target) return null
+      const order = compareVersions(current, target)
+      let pass
+      if (operator === '>=') pass = order >= 0
+      else if (operator === '<=') pass = order <= 0
+      else if (operator === '>') pass = order > 0
+      else if (operator === '<') pass = order < 0
+      else if (operator === '=') pass = order === 0
+      else if (operator === '^') {
+        pass = current.major === target.major && compareVersions(current, target) >= 0
+      } else if (operator === '~') {
+        pass =
+          current.major === target.major &&
+          current.minor === target.minor &&
+          compareVersions(current, target) >= 0
+      } else {
+        return null
+      }
+      if (!pass) {
+        accepted = false
+        break
+      }
+    }
+    if (accepted) return true
+  }
+  return false
+}
+
+function parseVersion(value) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(String(value))
+  if (!match) return null
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] ? match[4].split('.') : [],
+  }
+}
+
+function compareVersions(left, right) {
+  for (const key of ['major', 'minor', 'patch']) {
+    if (left[key] !== right[key]) return left[key] < right[key] ? -1 : 1
+  }
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0
+  if (left.prerelease.length === 0) return 1
+  if (right.prerelease.length === 0) return -1
+  const length = Math.max(left.prerelease.length, right.prerelease.length)
+  for (let index = 0; index < length; index += 1) {
+    const a = left.prerelease[index]
+    const b = right.prerelease[index]
+    if (a === undefined) return -1
+    if (b === undefined) return 1
+    const aNumber = /^\d+$/.test(a)
+    const bNumber = /^\d+$/.test(b)
+    if (aNumber && bNumber) {
+      const diff = Number(a) - Number(b)
+      if (diff !== 0) return diff < 0 ? -1 : 1
+    } else if (aNumber) return -1
+    else if (bNumber) return 1
+    else if (a !== b) return a < b ? -1 : 1
+  }
+  return 0
 }
 
 /** Write a JSON response, honoring HEAD. */
